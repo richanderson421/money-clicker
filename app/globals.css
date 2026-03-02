@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+
+body {
+  min-height: 100vh;
+  background: radial-gradient(circle at 20% 0%, #0b5a3f, #042f1e 45%, #01160d 100%);
+}
+
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+@keyframes pop {
+  0% { opacity: 0; transform: translate(-50%, 0) scale(0.8); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -70px) scale(1.08); }
+}
+
+.floating-plus {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  animation: pop 900ms ease-out forwards;
+  pointer-events: none;
+  font-weight: 700;
+  color: #b8ffd0;
+  text-shadow: 0 0 8px rgba(126,249,169,0.7);
+}
