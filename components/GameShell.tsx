@@ -127,6 +127,33 @@ export function GameShell() {
 
   const unlockedAchievements = game.achievements.filter((a) => a.unlockedAt).length;
 
+  const orderedUnlockedUpgrades = useMemo(() => {
+    const candidates = game.upgrades
+      .filter((u) => (u.unlockRebirthLevel ?? 0) <= game.rebirthLevel)
+      .map((u) => {
+        const before = getCashPerSecond(game);
+        const simulated = {
+          ...game,
+          upgrades: game.upgrades.map((x) => (x.id === u.id ? { ...x, level: x.level + 1 } : x))
+        };
+        const after = getCashPerSecond(simulated);
+        const delta = Math.max(0, after - before);
+        const cost = getUpgradeCost(u);
+        return { upgrade: u, delta, cost };
+      })
+      .sort((a, b) => {
+        if (b.delta !== a.delta) return b.delta - a.delta;
+        return a.cost - b.cost;
+      });
+
+    let anyPurchasedBefore = false;
+    return candidates.filter((entry, index) => {
+      const visible = index === 0 || anyPurchasedBefore;
+      if (entry.upgrade.level > 0) anyPurchasedBefore = true;
+      return visible;
+    });
+  }, [game]);
+
   return (
     <main className="mx-auto max-w-7xl p-4 md:p-6">
       <div className="mb-4 grid gap-2 rounded-2xl border border-white/10 bg-black/30 p-4 text-sm md:grid-cols-4">
@@ -178,20 +205,18 @@ export function GameShell() {
 
           <h3 className="mb-2 mt-4 text-lg font-semibold">Repeatable Upgrades</h3>
           <div className="max-h-[240px] space-y-2 overflow-auto pr-1">
-            {game.upgrades.filter((u) => (u.unlockRebirthLevel ?? 0) <= game.rebirthLevel).map((u) => {
-              const cost = getUpgradeCost(u);
-              return (
-                <button key={u.id} onClick={() => buyUpgrade(u.id)} disabled={game.cash < cost} className="w-full rounded-xl border border-white/10 bg-white/5 p-3 text-left hover:bg-white/10 disabled:opacity-60">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-semibold">{u.icon} {u.name} <span className="text-mint">Lv {u.level}</span></p>
-                      <p className="text-xs text-white/60">{u.description}</p>
-                    </div>
-                    <p className="font-semibold">{formatMoney(cost)}</p>
+            {orderedUnlockedUpgrades.map(({ upgrade: u, delta, cost }) => (
+              <button key={u.id} onClick={() => buyUpgrade(u.id)} disabled={game.cash < cost} className="w-full rounded-xl border border-white/10 bg-white/5 p-3 text-left hover:bg-white/10 disabled:opacity-60">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-semibold">{u.icon} {u.name} <span className="text-mint">Lv {u.level}</span></p>
+                    <p className="text-xs text-white/60">{u.description}</p>
+                    <p className="text-xs text-cyan-200/80">+{formatMoney(delta)}/sec next level</p>
                   </div>
-                </button>
-              );
-            })}
+                  <p className="font-semibold">{formatMoney(cost)}</p>
+                </div>
+              </button>
+            ))}
           </div>
         </section>
 
