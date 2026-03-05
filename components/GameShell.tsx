@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   OFFLINE_CAP_SECONDS,
+  REBIRTHS,
   applyAction,
   createInitialState,
   exactCurrency,
@@ -12,6 +13,7 @@ import {
   getBuildingCost,
   getCashPerSecond,
   getClickPower,
+  getUpgradeCost,
   importSave,
   loadState,
   saveGame,
@@ -31,6 +33,8 @@ export function GameShell() {
 
   const cashPerSecond = useMemo(() => getCashPerSecond(game), [game]);
   const clickPower = useMemo(() => getClickPower(game), [game]);
+  const frenzyLeft = Math.max(0, Math.floor((game.frenzyUntil - Date.now()) / 1000));
+  const nextRebirth = REBIRTHS[game.rebirthLevel];
 
   useEffect(() => {
     const now = Date.now();
@@ -69,29 +73,15 @@ export function GameShell() {
     return () => window.clearInterval(id);
   }, [game]);
 
-  useEffect(() => {
-    const persist = () => saveGame({ ...game, lastSeen: Date.now(), updatedAt: Date.now() });
-    const onVis = () => {
-      if (document.visibilityState === 'hidden') persist();
-    };
-    document.addEventListener('visibilitychange', onVis);
-    window.addEventListener('beforeunload', persist);
-    return () => {
-      document.removeEventListener('visibilitychange', onVis);
-      window.removeEventListener('beforeunload', persist);
-    };
-  }, [game]);
-
   const clickMoney = () => {
     const now = Date.now();
     setPressed(true);
     setTimeout(() => setPressed(false), 120);
-    setGame((prev) => applyAction(prev, { type: 'CLICK', now }));
+    const next = applyAction(game, { type: 'CLICK', now });
+    setGame(next);
     setSaved(false);
     setFloats((prev) => [...prev, { id: now, text: `+${formatMoney(clickPower)}` }]);
-    setTimeout(() => {
-      setFloats((prev) => prev.slice(1));
-    }, 900);
+    setTimeout(() => setFloats((prev) => prev.slice(1)), 900);
   };
 
   const buyBuilding = (id: string) => {
@@ -108,6 +98,16 @@ export function GameShell() {
     setSaved(true);
   };
 
+  const doRebirth = () => {
+    if (!nextRebirth) return;
+    if (!window.confirm(`Rebirth now? You will lose cash, buildings, and normal upgrades.\n\nUnlock: ${nextRebirth.description}`)) return;
+    const next = applyAction(game, { type: 'REDEEM_REBIRTH', now: Date.now() });
+    setGame(next);
+    saveGame(next);
+    setSaved(true);
+    setOfflineMessage(`Rebirth complete: ${nextRebirth.name}`);
+  };
+
   const onExport = async () => {
     await navigator.clipboard.writeText(exportSave(game));
     setOfflineMessage('Save copied to clipboard.');
@@ -117,10 +117,7 @@ export function GameShell() {
     const text = window.prompt('Paste your save JSON:');
     if (!text) return;
     const imported = importSave(text);
-    if (!imported) {
-      setOfflineMessage('Invalid save data.');
-      return;
-    }
+    if (!imported) return setOfflineMessage('Invalid save data.');
     const next = applyAction(game, { type: 'IMPORT_STATE', state: imported, now: Date.now() });
     setGame(next);
     saveGame(next);
@@ -128,14 +125,7 @@ export function GameShell() {
     setOfflineMessage('Save imported successfully.');
   };
 
-  const onReset = () => {
-    const confirmed = window.confirm('Reset all progress? This cannot be undone.');
-    if (!confirmed) return;
-    const next = applyAction(game, { type: 'RESET', now: Date.now() });
-    setGame(next);
-    saveGame(next);
-    setSaved(true);
-  };
+  const unlockedAchievements = game.achievements.filter((a) => a.unlockedAt).length;
 
   return (
     <main className="mx-auto max-w-7xl p-4 md:p-6">
@@ -143,10 +133,10 @@ export function GameShell() {
         <Stat label="Cash" value={formatMoney(game.cash)} exact={exactCurrency(game.cash)} />
         <Stat label="Cash/sec" value={formatMoney(cashPerSecond)} exact={exactCurrency(cashPerSecond)} />
         <Stat label="Click Power" value={formatMoney(clickPower)} exact={exactCurrency(clickPower)} />
+        <Stat label="Rebirth" value={`${game.rebirthLevel}`} />
+        <Stat label="Achievements" value={`${unlockedAchievements}/${game.achievements.length}`} />
         <Stat label="Total Earned" value={formatMoney(game.stats.totalEarned)} exact={exactCurrency(game.stats.totalEarned)} />
         <Stat label="Total Clicks" value={game.stats.totalClicks.toLocaleString()} />
-        <Stat label="Time Played" value={formatDuration(game.stats.timePlayed)} />
-        <Stat label="Biggest Offline" value={formatMoney(game.stats.biggestOfflinePayout)} exact={exactCurrency(game.stats.biggestOfflinePayout)} />
         <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2">
           <span className="text-white/70">Save Status</span>
           <span className={saved ? 'text-mint' : 'text-yellow-300'}>{saved ? 'Saved ✓' : 'Saving…'}</span>
@@ -157,28 +147,23 @@ export function GameShell() {
         <section className="rounded-2xl border border-white/10 bg-black/30 p-4">
           <h1 className="mb-3 text-2xl font-bold">Money Clicker</h1>
           <div className="relative flex min-h-[280px] items-center justify-center rounded-2xl bg-gradient-to-b from-emerald-500/20 to-black/20">
-            {floats.map((f) => (
-              <span key={f.id} className="floating-plus">{f.text}</span>
-            ))}
-            <button
-              onClick={clickMoney}
-              className={`relative transition-transform ${pressed ? 'scale-95' : 'scale-100'} animate-bob`}
-              aria-label="Tap for cash"
-            >
+            {floats.map((f) => <span key={f.id} className="floating-plus">{f.text}</span>)}
+            <button onClick={clickMoney} className={`relative transition-transform ${pressed ? 'scale-95' : 'scale-100'} animate-bob`} aria-label="Tap for cash">
               <MoneyOrb />
               <span className="absolute right-2 top-2 animate-sparkle text-xl">✨</span>
             </button>
           </div>
-          <p className="mt-3 text-sm text-white/70">Tap the money orb to earn cash. Build your empire with passive income.</p>
+          <p className="mt-3 text-sm text-white/70">Tap to earn cash. Frenzies are golden money emojis: 💰 x7 income for 1 minute.</p>
+          {frenzyLeft > 0 && <p className="mt-2 rounded-lg bg-yellow-400/20 px-3 py-2 text-sm text-yellow-200">💰 Frenzy active: {frenzyLeft}s left</p>}
         </section>
 
         <section className="rounded-2xl border border-white/10 bg-black/30 p-4">
           <h2 className="mb-3 text-xl font-semibold">Shop</h2>
-          <div className="space-y-2">
-            {game.buildings.map((b) => {
-              const cost = getBuildingCost(b);
+          <div className="max-h-[360px] space-y-2 overflow-auto pr-1">
+            {game.buildings.filter((b) => (b.unlockRebirthLevel ?? 0) <= game.rebirthLevel).map((b) => {
+              const cost = getBuildingCost(b, game.upgrades, game.rebirthLevel);
               return (
-                <button key={b.id} onClick={() => buyBuilding(b.id)} disabled={game.cash < cost} className="w-full rounded-xl border border-white/10 bg-white/5 p-3 text-left hover:bg-white/10">
+                <button key={b.id} onClick={() => buyBuilding(b.id)} disabled={game.cash < cost} className="w-full rounded-xl border border-white/10 bg-white/5 p-3 text-left hover:bg-white/10 disabled:opacity-60">
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="font-semibold">{b.icon} {b.name} <span className="text-white/50">x{b.owned}</span></p>
@@ -190,28 +175,51 @@ export function GameShell() {
               );
             })}
           </div>
-          <h3 className="mb-2 mt-4 text-lg font-semibold">Upgrades</h3>
-          <div className="space-y-2">
-            {game.upgrades.map((u) => (
-              <button key={u.id} onClick={() => buyUpgrade(u.id)} disabled={u.purchased || game.cash < u.cost} className="w-full rounded-xl border border-white/10 bg-white/5 p-3 text-left hover:bg-white/10">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-semibold">{u.icon} {u.name} {u.purchased && <span className="text-mint">(Owned)</span>}</p>
-                    <p className="text-xs text-white/60">{u.description}</p>
+
+          <h3 className="mb-2 mt-4 text-lg font-semibold">Repeatable Upgrades</h3>
+          <div className="max-h-[240px] space-y-2 overflow-auto pr-1">
+            {game.upgrades.filter((u) => (u.unlockRebirthLevel ?? 0) <= game.rebirthLevel).map((u) => {
+              const cost = getUpgradeCost(u);
+              return (
+                <button key={u.id} onClick={() => buyUpgrade(u.id)} disabled={game.cash < cost} className="w-full rounded-xl border border-white/10 bg-white/5 p-3 text-left hover:bg-white/10 disabled:opacity-60">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-semibold">{u.icon} {u.name} <span className="text-mint">Lv {u.level}</span></p>
+                      <p className="text-xs text-white/60">{u.description}</p>
+                    </div>
+                    <p className="font-semibold">{formatMoney(cost)}</p>
                   </div>
-                  <p className="font-semibold">{formatMoney(u.cost)}</p>
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
           </div>
         </section>
 
         <section className="rounded-2xl border border-white/10 bg-black/30 p-4">
-          <h2 className="mb-3 text-xl font-semibold">Save Controls</h2>
+          <h2 className="mb-2 text-xl font-semibold">Rebirth</h2>
+          {nextRebirth ? (
+            <>
+              <p className="text-sm text-white/70">Next: {nextRebirth.name}</p>
+              <p className="text-sm text-white/50">{nextRebirth.description}</p>
+              <button disabled={game.cash < nextRebirth.cost} className="mt-3 w-full rounded-xl bg-cyan-400 px-3 py-2 font-semibold text-black disabled:opacity-50" onClick={doRebirth}>
+                Rebirth ({formatMoney(nextRebirth.cost)})
+              </button>
+            </>
+          ) : <p className="text-sm text-mint">Max rebirth tier reached (for now).</p>}
+
+          <h3 className="mb-2 mt-5 font-semibold">Achievements</h3>
+          <div className="max-h-48 space-y-1 overflow-auto text-xs">
+            {game.achievements.map((a) => (
+              <p key={a.id} className={a.unlockedAt ? 'text-mint' : 'text-white/45'}>
+                {a.unlockedAt ? '✅' : '⬜'} {a.name}
+              </p>
+            ))}
+          </div>
+
+          <h3 className="mb-2 mt-5 font-semibold">Save</h3>
           <div className="space-y-2">
             <button className="w-full rounded-xl bg-emerald-500 px-3 py-2 font-semibold text-black" onClick={onExport}>Export Save</button>
             <button className="w-full rounded-xl bg-emerald-300 px-3 py-2 font-semibold text-black" onClick={onImport}>Import Save</button>
-            <button className="w-full rounded-xl bg-red-500 px-3 py-2 font-semibold" onClick={onReset}>Reset Game</button>
           </div>
         </section>
       </div>
